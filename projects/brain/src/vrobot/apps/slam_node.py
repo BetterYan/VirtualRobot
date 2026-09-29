@@ -17,7 +17,8 @@ from pathlib import Path
 import yaml
 
 from vrobot.comm.server import SimServer
-from vrobot.control.explorer import AutoExplorer
+from vrobot.control.explorer import FrontierExplorer, ReactiveExplorer
+from vrobot.control.hybrid_explorer import HybridExplorer
 from vrobot.eval.evaluator import PoseEvaluator
 from vrobot.slam.slam2d import Slam2D, SlamConfig
 from vrobot.viz.map_viewer import MapViewer
@@ -49,12 +50,33 @@ async def run(cfg: dict, show_view: bool, force_auto: bool | None) -> None:
     slam = Slam2D(slam_cfg)
 
     exp_cfg = cfg.get("explorer", {})
-    explorer = AutoExplorer(
-        linear=exp_cfg.get("linear", 55.0),
-        angular=exp_cfg.get("angular", 1.6),
-        front_dist=exp_cfg.get("front_dist", 60.0),
-        beam_spread=exp_cfg.get("beam_spread", 7),
-    )
+    exp_mode = str(exp_cfg.get("mode", "hybrid"))
+    if exp_mode == "hybrid":
+        explorer = HybridExplorer(
+            cell_size=slam.grid.cell_size,
+            linear=exp_cfg.get("linear", 60.0),
+            angular=exp_cfg.get("angular", 1.5),
+            inflate_cells=exp_cfg.get("inflate_cells", 2),
+            lane_pitch=exp_cfg.get("hybrid", {}).get("lane_pitch", 4),
+            min_run=exp_cfg.get("hybrid", {}).get("min_run", 4),
+        )
+    elif exp_mode == "frontier":
+        explorer = FrontierExplorer(
+            cell_size=slam.grid.cell_size,
+            linear=exp_cfg.get("linear", 60.0),
+            angular=exp_cfg.get("angular", 2.4),
+            inflate_cells=exp_cfg.get("inflate_cells", 2),
+            min_frontier_size=exp_cfg.get("min_frontier_size", 4),
+        )
+    elif exp_mode == "reactive":
+        explorer = ReactiveExplorer(
+            linear=exp_cfg.get("reactive", {}).get("linear", 55.0),
+            angular=exp_cfg.get("reactive", {}).get("angular", 1.6),
+            front_dist=exp_cfg.get("reactive", {}).get("front_dist", 60.0),
+            beam_spread=exp_cfg.get("reactive", {}).get("beam_spread", 7),
+        )
+    else:  # off
+        explorer = None
     auto_enabled = force_auto if force_auto is not None else bool(exp_cfg.get("enabled", False))
     mode_state = {"auto": auto_enabled}
 
@@ -72,15 +94,16 @@ async def run(cfg: dict, show_view: bool, force_auto: bool | None) -> None:
     print("=" * 62)
     print(" vrobot 2D SLAM 节点已启动")
     print(f" 监听: ws://{server.host}:{server.port}  （请随后启动 Godot sim2d 场景）")
-    print(f" 自动探索: {'开' if mode_state['auto'] else '关'}（Godot HUD 按钮可随时切换）")
+    print(f" 探索模式: {exp_mode}  自动驾驶: {'开' if mode_state['auto'] else '关'}（Godot HUD 按钮可切换）")
     print(" Ctrl+C 退出")
     print("=" * 62)
 
     seq = 0
     frame_count = 0
     last_stats_t = time.time()
-    cmd_interval = 0.1  # cmd_vel 下行 10Hz
+    cmd_interval = 0.05  # cmd_vel 下行 20Hz（与传感器帧率一致；过低会加剧沿边摆动）
     last_cmd_t = 0.0
+    done_reported = False
 
     try:
         while True:
@@ -92,12 +115,17 @@ async def run(cfg: dict, show_view: bool, force_auto: bool | None) -> None:
                     evaluator.update(result.pose, server.ground_truth)
 
             now = time.time()
-            if mode_state["auto"] and server.connected.is_set() and now - last_cmd_t >= cmd_interval:
+            if mode_state["auto"] and explorer is not None and server.connected.is_set() \
+                    and now - last_cmd_t >= cmd_interval:
                 if frame is not None:
-                    linear, angular = explorer.update(frame.scan)
+                    linear, angular = explorer.update(slam, frame.scan)
                     server.send_cmd_vel(linear, angular, seq)
                     seq += 1
                     last_cmd_t = now
+                    if getattr(explorer, "done", False) and not done_reported:
+                        done_reported = True
+                        print(">>> 探索完成：可达范围内已无可达边界，地图构建完毕。"
+                              "（Godot 切回 manual 模式可手动查看）")
 
             if viewer.enabled and frame is not None and frame_count % 3 == 0:
                 gt = (server.ground_truth.x, server.ground_truth.y, server.ground_truth.theta) \

@@ -35,6 +35,10 @@ class SlamConfig:
         )
     )
     use_match: bool = True
+    # 关键帧插入策略：位姿相对上次入图变化足够大才写入栅格。
+    # 原地旋转时逐帧入图会让墙体沿角度方向涂抹成"辐条"（旋转角超过雷达角分辨率）。
+    insert_min_dist: float = 5.0     # 平移 ≥5px 才入图
+    insert_min_angle: float = 0.15   # 旋转 ≥0.15rad(≈8.6°) 才入图
 
 
 @dataclass
@@ -54,6 +58,7 @@ class Slam2D:
         self.pose: tuple[float, float, float] = (0.0, 0.0, 0.0)
         self.trajectory: list[tuple[float, float, float]] = []
         self._initialized = False
+        self._last_insert: tuple[float, float, float] | None = None
 
     @property
     def initialized(self) -> bool:
@@ -66,6 +71,7 @@ class Slam2D:
         self.grid = OccupancyGrid(**self.cfg.grid)
         self.matcher = CorrelativeScanMatcher(self.grid, **self.cfg.scan_match)
         self._initialized = False
+        self._last_insert = None
 
     def process(self, odom: Odometry2D, scan: LaserScan2D) -> SlamResult:
         """喂入一帧传感器数据，返回本帧位姿估计。"""
@@ -94,9 +100,11 @@ class Slam2D:
                 self.pose = cand
                 matched = True
 
-        # 3) 建图：用当前最优位姿写入栅格
-        world_pts = scan_world_points(scan, self.pose)
-        self.grid.update(self.pose, world_pts)
+        # 3) 建图：关键帧插入——位姿变化足够大才写入栅格（抑制旋转涂抹）
+        if self._should_insert():
+            world_pts = scan_world_points(scan, self.pose)
+            self.grid.update(self.pose, world_pts)
+            self._last_insert = self.pose
         self.trajectory.append(self.pose)
 
         return SlamResult(
@@ -106,3 +114,13 @@ class Slam2D:
     @property
     def theta(self) -> float:
         return wrap_angle(self.pose[2])
+
+    def _should_insert(self) -> bool:
+        if self._last_insert is None:
+            return True
+        dx = self.pose[0] - self._last_insert[0]
+        dy = self.pose[1] - self._last_insert[1]
+        if dx * dx + dy * dy >= self.cfg.insert_min_dist**2:
+            return True
+        dth = abs(wrap_angle(self.pose[2] - self._last_insert[2]))
+        return dth >= self.cfg.insert_min_angle

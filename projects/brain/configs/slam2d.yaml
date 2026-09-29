@@ -5,7 +5,7 @@ server:
   port: 9094
 
 sensor:            # 与 Godot hello 消息对齐；以 hello 为准，此处是兜底默认
-  lidar_beams: 72
+  lidar_beams: 144
   angle_min: -3.14159265
   range_max: 320.0
 
@@ -29,11 +29,20 @@ slam:
   use_match: true       # false = 纯里程计（对照基线）
 
 explorer:
-  enabled: false        # true = 算法端自动驾驶；false = Godot 键盘遥控
-  linear: 55.0
-  angular: 1.6
-  front_dist: 60.0      # 正前方障碍触发转向距离 px
-  beam_spread: 7        # 判定"正前方"使用的射线数（奇数）
+  mode: hybrid           # hybrid=沿边→弓形→frontier | frontier=纯frontier | reactive=反应式避障(调试) | off
+  enabled: true           # 自动驾驶默认开启（Godot HUD 按钮可切 manual 遥控）
+  linear: 60.0
+  angular: 1.5
+  inflate_cells: 2        # A* 障碍膨胀格数（≈机器人半径 14px / 8px 格）
+  min_frontier_size: 4    # 忽略过小的未知碎片
+  hybrid:                 # hybrid 模式参数（沿边→弓形→frontier 三阶段）
+    lane_pitch: 4         # 弓形车道行距（格，4格=32px）
+    min_run: 4            # 车道最小长度（格）
+  reactive:               # reactive 模式参数
+    linear: 55.0
+    angular: 1.6
+    front_dist: 60.0
+    beam_spread: 7
 
 eval:
   enabled: true         # 消费 ground_truth 计算位姿误差（不影响算法）

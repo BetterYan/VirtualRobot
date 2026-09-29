@@ -15,11 +15,31 @@ src/vrobot/
 │   ├── odom.py           # 里程计增量合成
 │   ├── slam2d.py         # 2D SLAM 主类（v1 = TinySLAM 式）
 │   └── particle.py       # 预留：RBPF 粒子滤波（v2）
-├── control/     # 自动探索（雷达避障）
+├── control/     # 自主探索：HybridExplorer（沿边→弓形→frontier，默认）/ FrontierExplorer / ReactiveExplorer（兜底）
+├── planning/    # A* 栅格寻路（障碍膨胀 / 未知区代价）
 ├── viz/         # matplotlib 实时地图
 ├── eval/        # 真值对比评估（位姿误差等）
 └── apps/        # 入口 slam_node.py
 ```
+
+## 自主建图（当前主模式）
+
+行业两阶段：**先探索建图，后弓形覆盖**。本包默认 `hybrid` 模式把两阶段融合为
+一个闭环（`HybridExplorer`）：
+
+```
+seek_wall 直行找边界 → wall_follow 右手沿边 → 轨迹闭环 → coverage 弓形覆盖
+                                                              ⇅（新自由区 ≥120 格时交还）
+                                                          frontier 未知边界收尾 → done
+```
+
+启动后 Godot 切 Auto 模式即可（终端实时打印阶段切换，"探索完成"即建图完毕）。
+
+```bash
+uv run python -m vrobot.apps.slam_node --config configs/slam2d.yaml   # explorer.mode: hybrid
+```
+
+可选 `explorer.mode: frontier` 切换为纯 Frontier 探索（步数更少但轨迹无序）。
 
 ## 运行
 

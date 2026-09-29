@@ -15,7 +15,7 @@ const WSClient = preload("res://scripts/transport/ws_client.gd")
 
 const WS_URL := "ws://127.0.0.1:9094"
 const SEND_HZ := 20.0
-const BEAMS := 72
+const BEAMS := 144
 const RANGE_MAX := 320.0
 const RANGE_NOISE := 2.0
 const ODOM_NOISE := 0.02
