@@ -7,7 +7,7 @@ projects/godot/export/
 *.blend1
 *.blend2
 
-# ---- Python（brain-python 二期预留）----
+# ---- Python（projects/brain，uv 管理）----
 __pycache__/
 *.py[cod]
 .venv/

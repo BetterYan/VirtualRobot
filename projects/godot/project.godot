@@ -11,8 +11,8 @@ config_version=5
 [application]
 
 config/name="VirtualRobot"
-config/description="扫地机器人打扫房间仿真 - Godot 可视化层"
-run/main_scene="res://scenes/main_3d.tscn"
+config/description="扫地机器人仿真 - Godot 无图传感器仿真器 + Python 2D SLAM 算法端"
+run/main_scene="res://scenes/sim2d.tscn"
 config/features=PackedStringArray("4.7")
 
 [display]

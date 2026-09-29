@@ -1,10 +1,8 @@
-# 跨进程通信协议（共享契约）
+# protocols/ — 跨进程通信契约
 
-> 状态：占位。M3 前完成初版 schema。
-> 本目录是与语言无关的唯一通信契约，`projects/godot` 与 `projects/brain-python` 共同遵守。
+> 与语言无关的唯一消息定义：**[message-schema.md](message-schema.md) v1.0**
+> 两端实现：`projects/godot/scripts/transport/protocol.gd` ↔ `projects/brain/src/vrobot/comm/messages.py`
+> 传输：WebSocket（Python 服务端 ws://127.0.0.1:9094，Godot 客户端），JSON 文本帧。
 
-计划内容：
-- 传感器上行消息：`sensor`（位姿、碰撞、雷达命中点、电量）
-- 指令下行消息：`move` / `goto` / `dock` / `stop`
-- 消息信封：`{ "type": ..., "seq": ..., "ts": ..., "payload": ... }`
-- 序列化格式与频率：见 `docs/02-python独立大脑方案.md` 第 3 节
+消息类型：`hello` / `sensor_frame` / `ground_truth`（上行），`cmd_vel` / `set_mode`（下行）。
+改动流程：先改 message-schema.md 并升版本号 → 两端同步实现。

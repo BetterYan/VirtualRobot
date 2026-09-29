@@ -1,58 +1,74 @@
 # VirtualRobot 🤖
 
-**扫地机器人覆盖路径规划仿真** — 基于 Godot 4 的可视化仿真，行为逻辑与渲染层完全解耦，可独立演进。
+**机器人仿真与定位算法验证平台** — Godot 4 无图传感器仿真 + Python 端 2D SLAM；一期覆盖清扫演示保留可运行。
 
 [![Godot](https://img.shields.io/badge/Godot-4.7-478CBF?logo=godotengine&logoColor=white)](https://godotengine.org)
-[![Stage](https://img.shields.io/badge/阶段-一期%20Godot%20一体式-orange)](docs/00-项目总览.md)
+[![Stage](https://img.shields.io/badge/阶段-SLAM%20验证(无图模式)-blue)](docs/04-仿真器与算法端架构.md)
+[![Tests](https://img.shields.io/badge/tests-15%20passed-success)](projects/brain)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
 ---
 
 ## ✨ 功能特性
 
-- **弓字形覆盖规划（CPP）**：蛇形清扫序列生成 + A\* 断点衔接 + 循迹执行
-- **全局避障**：基于已知静态地图的全局规划，物理碰撞兜底
-- **电量管理与回充**：低电 20% 触发 A\* 回桩，充满续扫，全覆盖后归位
-- **双版本可视化**：2D 版（Line2D 轨迹、覆盖热力图、HUD）与 3D 版（3D 房间、小地图、仪表盘）
-- **逻辑与渲染零耦合**：`core/` 算法层不依赖任何渲染节点，为"大脑外置"预留迁移路径
+**SLAM 验证模式（当前主模式）**
+- **无图传感器仿真**：Godot 构建物理世界（墙体/家具/碰撞），输出带噪 2D 激光（72 线）与带噪里程计，不向算法端泄漏任何地图
+- **2D SLAM（Python 实现）**：里程计预测 + 相关性扫描匹配（双线性插值、粗→细两级）+ 对数概率占据栅格（TinySLAM 式）
+- **双驾驶模式**：Godot 键盘遥控采集数据 / 算法端自动探索（雷达避障走行），cmd_vel 0.5s 超时安全停车
+- **实时可视化**：matplotlib 占据概率地图 + 估计轨迹 + 真值对照；真值走独立评估通道，代码级隔离
+- **离线可验证**：合成理想世界端到端测试（15 项通过：终点误差 2.4px/0.4°，召回 100%，误报 0%）
+
+**一期覆盖清扫（保留演示）**
+- 弓字形覆盖规划（CPP）+ A* 断点衔接、电量管理与回充、2D/3D 双版本可视化
 
 ## 🏗️ 架构
 
 ```
-┌─────────────────────────────────────────────┐
-│  一期（当前）：Godot 一体式                    │
-│  ┌──────────────┐      ┌──────────────────┐ │
-│  │ core/ 算法层  │ ───▶ │ visualization/   │ │
-│  │ 覆盖规划·A*   │ 指令 │ 2D/3D 渲染·HUD   │ │
-│  │ 状态机·电量   │ 数据 │ 热力图·小地图     │ │
-│  └──────────────┘      └──────────────────┘ │
-└─────────────────────────────────────────────┘
-                  │ 二期演进
-                  ▼
-┌────────────────┐   WebSocket    ┌───────────┐
-│ brain-python   │ ◀────────────▶ │ Godot     │
-│ Python 独立大脑 │  protocols/    │ 仅表现层   │
-└────────────────┘   消息契约     └───────────┘
+┌──────────────────────────┐  WebSocket(JSON) 20Hz ┌───────────────────────────┐
+│ Godot 4 = 虚拟物理世界     │ ── sensor_frame ────▶ │ Python vrobot = 算法端      │
+│ · 场景/物理碰撞            │  带噪里程计+2D激光      │ · 2D SLAM：建图 + 定位      │
+│ · 传感器仿真（雷达/里程计） │ ◀── cmd_vel ─────────  │ · 自动探索 / 遥控执行       │
+│ · 键盘遥控 / 模式切换      │                       │ · 实时地图可视化            │
+│ · 轨迹渲染（操作员视角）    │ ── ground_truth ────▶ │ · 真值评估（不进算法）       │
+└──────────────────────────┘   仅评估，可选           └───────────────────────────┘
 ```
 
-关键原则：一期写逻辑时就保证 `core/` 不依赖任何渲染节点，二期迁移只换宿主、不改接口。
+- **无图铁律**：算法端永远不知道世界的真面目，只从带噪传感器流重建认知
+- **契约先行**：消息格式唯一真相源在 `protocols/message-schema.md`，两端各自实现
+- **一期一体式**（`core/` 内嵌算法 + 2D/3D 渲染）保留可运行，作"开天眼"对照基线
 
 ## 🚀 快速开始
 
 ### 环境要求
 
 - [Godot 4.7+](https://godotengine.org/download)（标准版即可，无需 .NET）
+- [uv](https://docs.astral.sh/uv/)（Python 包管理，Python ≥ 3.10 由 uv 自动准备；依赖：numpy / websockets / pyyaml / matplotlib）
 - 可选：Blender（仅在需要编辑 `asserts/Robot.blend` 模型时安装）
 
-### 运行
-
-1. 用 Godot 4.7 打开 `projects/godot/project.godot`（首次打开会自动导入资源、生成 `.godot` 缓存）
-2. 按 `F5` 运行 → 点击左下角「开始」按钮
-3. 机器人开始弓字形清扫，HUD 实时显示状态、覆盖率、电量
-
-### 无头单元测试
+### 运行（SLAM 验证模式，当前主模式）
 
 ```bash
+# 1. 启动 Python 算法端（先启动，监听 ws://127.0.0.1:9094）
+cd projects/brain
+uv sync                                   # 首次：创建 .venv 并按 uv.lock 安装依赖
+uv run python -m vrobot.apps.slam_node --config configs/slam2d.yaml
+
+# 2. Godot 端：打开 projects/godot → F5（主场景 sim2d.tscn，无图传感器仿真）
+#    HUD 显示"已连接"后：方向键/WASD 遥控采集数据，或点按钮切 Auto 让算法端驾驶
+```
+
+### 运行（一期一体式覆盖清扫演示，保留）
+
+1. Godot 打开 `projects/godot`，运行 `scenes/main.tscn` 或 `main_3d.tscn`
+2. 点击「开始」→ 弓字形清扫 + 回充全流程
+
+### 测试
+
+```bash
+# Python 算法端（无需 Godot，合成世界端到端验证）
+cd projects/brain && uv run pytest tests/ -v
+
+# Godot 一期无头单测
 godot --headless --path projects/godot --script res://tests/run_tests.gd
 ```
 
@@ -64,40 +80,49 @@ VirtualRobot/
 │   └── Robot.blend            # 机器人模型源文件（Godot 4 可直接导入）
 ├── docs/                      # 设计与规划文档
 │   ├── 00-项目总览.md          # 全局架构与演进路线
-│   ├── 01-godot起步方案.md     # 一期规划：里程碑、接口、验收标准
-│   └── 02-python独立大脑方案.md # 二期架构与依赖选型
+│   ├── 03-机器人定位算法调研.html # 定位算法技术调研（2026）
+│   └── 04-仿真器与算法端架构.md # ★ 当前架构：无图仿真 + SLAM 验证
 ├── projects/
-│   ├── godot/                 # Godot 4 主项目（一期）
-│   │   ├── scenes/            # main.tscn（2D）/ main_3d.tscn（3D）
-│   │   ├── scripts/
-│   │   │   ├── core/          # 算法层：覆盖规划、A*、状态机、世界模型
-│   │   │   ├── visualization/ # 2D 渲染：轨迹、热力图、HUD
-│   │   │   └── visualization3d/ # 3D 渲染：房间、小地图、仪表盘
-│   │   └── tests/             # 无头单测
-│   └── brain-python/          # 预留：Python 独立行为逻辑进程（二期）
+│   ├── godot/                 # Godot 4 虚拟世界（无图传感器仿真器）
+│   │   ├── scenes/            # sim2d.tscn（主）+ main.tscn / main_3d.tscn（保留）
+│   │   └── scripts/
+│   │       ├── sim/           # ★ 传感器仿真：雷达/里程计/机器人/遥控/HUD
+│   │       ├── transport/     # WebSocket 客户端 + 协议编解码
+│   │       ├── core/          # 一期算法（保留作对照）
+│   │       └── visualization*/ # 一期 2D/3D 渲染（保留）
+│   └── brain/                 # Python 算法端（vrobot 包）
+│       ├── src/vrobot/
+│       │   ├── slam/          # ★ 2D SLAM：栅格建图 + 扫描匹配
+│       │   ├── comm/          # WebSocket 服务端 + 消息编解码
+│       │   ├── control/       # 自动探索（雷达避障）
+│       │   ├── viz/           # matplotlib 实时地图
+│       │   └── apps/          # 入口 slam_node.py
+│       ├── configs/           # 算法参数
+│       └── tests/             # 合成世界端到端测试
 └── protocols/                 # 跨进程通信协议契约（语言无关）
+    └── message-schema.md      # ★ v1.0 消息定义
 ```
 
 ## 🗺️ 路线图
 
-- [x] 顶层结构与文档规划
-- [x] M1 场景搭建：房间、墙体/家具碰撞、充电桩、机器人实体
-- [x] M2 传感器与快照：位姿/碰撞/雷达字段，HUD 实时显示
-- [x] M3 弓字形覆盖：蛇形序列 + A\* 断点衔接 + 循迹执行
-- [x] M4 避障与绕行：全局规划 + 物理碰撞兜底
-- [x] M5 电量与回充：低电回桩、充满续扫、全覆盖归位
-- [x] M6 可视化：轨迹、覆盖热力图、HUD、开始/暂停/重置
-- [ ] 首次运行验证 + 调参（扫道间距、速度、电量速率）
-- [ ] 二期：Python 独立大脑 + WebSocket（协议见 `protocols/`）
+- [x] 一期：Godot 一体式覆盖清扫（M1–M6，保留可运行）
+- [x] 定位算法调研与选型（docs/03）
+- [x] 无图仿真架构 + 通信协议 v1.0（docs/04 + protocols/）
+- [x] Python 2D SLAM v1：扫描匹配 + 占据栅格（合成世界验证：终点误差 2.4px，召回 100%）
+- [x] Godot sim2d 传感器仿真场景（雷达/里程计/遥控/自动模式）
+- [ ] Godot ↔ Python 实机联调
+- [ ] v2：RBPF 粒子滤波 → v3：图优化回环
+- [ ] 覆盖规划移植回 Python 端（基于 SLAM 地图）
+- [ ] 3D / VSLAM 扩展（sensors/slam3d）
 
 ## 📚 文档
 
 | 文档 | 内容 |
 |------|------|
 | [docs/00-项目总览.md](docs/00-项目总览.md) | 架构、目录约定、演进路线 |
-| [docs/01-godot起步方案.md](docs/01-godot起步方案.md) | 一期目标、里程碑、接口设计、验收标准 |
-| [docs/02-python独立大脑方案.md](docs/02-python独立大脑方案.md) | 二期架构、进程模型、依赖选型 |
-| [protocols/README.md](protocols/README.md) | WebSocket 消息 schema 契约 |
+| [docs/03-机器人定位算法调研.html](docs/03-机器人定位算法调研.html) | 2026 定位算法全景调研与选型 |
+| [docs/04-仿真器与算法端架构.md](docs/04-仿真器与算法端架构.md) | ★ 当前架构、算法管线、扩展规划 |
+| [protocols/message-schema.md](protocols/message-schema.md) | WebSocket 消息 schema 契约 v1.0 |
 
 ## License
 

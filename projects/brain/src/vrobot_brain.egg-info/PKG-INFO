@@ -1,0 +1,9 @@
+Metadata-Version: 2.4
+Name: vrobot-brain
+Version: 0.1.0
+Summary: VirtualRobot 算法端：2D SLAM 建图定位（无图仿真验证）
+Requires-Python: >=3.10
+Requires-Dist: numpy>=1.24
+Requires-Dist: websockets>=11.0
+Requires-Dist: pyyaml>=6.0
+Requires-Dist: matplotlib>=3.7

@@ -9,6 +9,7 @@ const STAGES := ["传感器采集", "栅格世界模型", "弓字形覆盖规划
 
 var _btn_start: Button
 var _btn_view: Button
+var _overview := true  # 当前视角状态：true=全景，false=跟随
 var _lbl_state: Label
 var _lbl_algo: Label
 var _stages: Array[Label] = []
@@ -102,9 +103,9 @@ func _on_start_pressed() -> void:
 
 
 func _on_view_pressed() -> void:
-	var overview := _btn_view.text.contains("全景")
-	_btn_view.text = "视角: 跟随" if overview else "视角: 全景"
-	view_toggle_requested.emit(overview)
+	_overview = not _overview
+	_btn_view.text = "视角: 全景" if _overview else "视角: 跟随"
+	view_toggle_requested.emit(_overview)
 
 
 func set_running(running: bool) -> void:

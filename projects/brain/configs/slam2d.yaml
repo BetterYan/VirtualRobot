@@ -1,0 +1,39 @@
+# vrobot 2D SLAM 配置（对应 protocols/message-schema v1.0）
+
+server:
+  host: "127.0.0.1"
+  port: 9094
+
+sensor:            # 与 Godot hello 消息对齐；以 hello 为准，此处是兜底默认
+  lidar_beams: 72
+  angle_min: -3.14159265
+  range_max: 320.0
+
+grid:
+  cell_size: 8.0        # px / 格
+  width: 200            # 格数（1600px）
+  height: 160           # 格数（1280px）
+  l_hit: 0.9            # 命中格 log-odds 增量
+  l_miss: -0.35         # 途经空闲格 log-odds 增量
+  l_min: -4.0           # clamp 上下限
+  l_max: 4.0
+
+scan_match:
+  search_xy: 24.0       # 粗搜索半窗 px
+  search_th: 0.20       # 粗搜索半窗 rad
+  coarse_step_xy: 4.0
+  coarse_step_th: 0.05
+  min_score: 0.30       # 命中点平均概率低于此值则不采纳匹配结果
+
+slam:
+  use_match: true       # false = 纯里程计（对照基线）
+
+explorer:
+  enabled: false        # true = 算法端自动驾驶；false = Godot 键盘遥控
+  linear: 55.0
+  angular: 1.6
+  front_dist: 60.0      # 正前方障碍触发转向距离 px
+  beam_spread: 7        # 判定"正前方"使用的射线数（奇数）
+
+eval:
+  enabled: true         # 消费 ground_truth 计算位姿误差（不影响算法）
