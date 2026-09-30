@@ -28,12 +28,23 @@ class MapViewer:
             self._plt = plt
             plt.ion()
             self._fig, self._ax = plt.subplots(figsize=(9, 7))
-            self._fig.canvas.manager.set_window_title("vrobot SLAM 实时地图") if hasattr(
-                self._fig, "canvas"
-            ) and self._fig.canvas.manager else None
+            if self._fig.canvas.manager:
+                self._fig.canvas.manager.set_window_title("vrobot SLAM 实时地图")
+                self._unset_topmost()
         except Exception as e:  # 无显示环境等情况
             log.warning("可视化不可用，已禁用: %s", e)
             self.enabled = False
+
+    def _unset_topmost(self) -> None:
+        """防御性关闭 topmost（部分后端/WM 会把交互式窗口置顶）。"""
+        try:
+            win = self._fig.canvas.manager.window
+            if hasattr(win, "attributes"):  # Tk
+                win.attributes("-topmost", False)
+            if hasattr(win, "setWindowFlag"):  # Qt
+                win.setWindowFlag(win.windowFlag() & ~0x00000001)  # 去 WindowStaysOnTopHint
+        except Exception:
+            pass
 
     def update(self, slam, gt_pose: tuple[float, float, float] | None = None) -> None:
         if not self.enabled:
@@ -55,7 +66,10 @@ class MapViewer:
             if gt_pose is not None:
                 self._gt_marker.set_data([gt_pose[0] / self.cell_size - 0.5], [gt_pose[1] / self.cell_size - 0.5])
             self._ax.set_title(f"SLAM map  frame={self._frame}")
-            self._plt.pause(0.001)
+            # 不用 plt.pause()：内部 manager.show() 会反复抬顶+抢焦点。
+            # draw_idle + flush_events 只重绘与处理事件，Z 序/焦点交给系统。
+            self._fig.canvas.draw_idle()
+            self._fig.canvas.flush_events()
             self._frame += 1
         except Exception as e:
             log.debug("viewer update failed: %s", e)

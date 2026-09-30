@@ -42,7 +42,7 @@ func scan() -> PackedFloat32Array:
 			out[i] = -1.0
 		else:
 			var d: float = origin.distance_to(hit.position)
-			out[i] = maxf(0.0, d + _rng.randf_range(-noise_std, noise_std))
+			out[i] = maxf(0.0, d + _rng.randfn() * noise_std)
 	last_ranges = out
 	scanned.emit(out)
 	return out

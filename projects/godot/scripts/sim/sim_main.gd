@@ -41,7 +41,7 @@ var mode := "manual"   # "manual" | "auto"
 var _seq := 0
 var _mode_seq := 0
 var _send_acc := 0.0
-var _send_hz_meas := 0.0
+var _physics_hz_meas := 0.0   # 实测物理帧率（非上行频率）
 var _frames_this_sec := 0
 var _hz_timer := 0.0
 var _truth_trail := PackedVector2Array()
@@ -124,11 +124,11 @@ func _physics_process(dt: float) -> void:
 	_hz_timer += dt
 	_frames_this_sec += 1
 	if _hz_timer >= 1.0:
-		_send_hz_meas = _frames_this_sec / _hz_timer
+		_physics_hz_meas = _frames_this_sec / _hz_timer
 		_hz_timer = 0.0
 		_frames_this_sec = 0
 	if _send_acc >= 1.0 / SEND_HZ:
-		_send_acc = 0.0
+		_send_acc -= 1.0 / SEND_HZ   # 扣除已消耗配额，保留余量，长期平均频率精确为 SEND_HZ
 		_send_frame()
 
 
@@ -188,7 +188,7 @@ func _toggle_mode() -> void:
 func _process(_dt: float) -> void:
 	if hud != null and ws != null:
 		hud.update_text(
-			ws.is_connected, mode, _send_hz_meas, _seq,
+			ws.is_connected, mode, _physics_hz_meas, _seq,
 			Vector3(robot.global_position.x, robot.global_position.y, robot.global_rotation),
 			odom.pose
 		)

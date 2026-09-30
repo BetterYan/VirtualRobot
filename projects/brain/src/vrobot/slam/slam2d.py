@@ -35,6 +35,13 @@ class SlamConfig:
         )
     )
     use_match: bool = True
+    # 匹配预热：入图次数不足前地图不可信（首帧附近格点稀疏，得分面噪声大），
+    # 跳过匹配、纯里程计预测，可消除启动阶段的尖刺。
+    match_warmup_updates: int = 3
+    # 迟滞接受：候选位姿得分须超过"当前预测位姿得分 + margin"才接受。
+    # 沿墙/开阔地等得分面平坦场景下，argmax 会随激光噪声在相邻候选间翻转，
+    # 导致静止时位姿在两个局部最优间跳变（位置/角度互补振荡）。margin 熄灭这种翻转。
+    accept_margin: float = 0.02
     # 关键帧插入策略：位姿相对上次入图变化足够大才写入栅格。
     # 原地旋转时逐帧入图会让墙体沿角度方向涂抹成"辐条"（旋转角超过雷达角分辨率）。
     insert_min_dist: float = 5.0     # 平移 ≥5px 才入图
@@ -93,10 +100,14 @@ class Slam2D:
         pts_local = scan.local_endpoints()
         score, matched = 0.0, False
 
-        if self.cfg.use_match and pts_local.shape[0] >= 5:
-            # 2) 扫描匹配修正（得分低于 min_score 则拒绝，信任里程计预测）
+        if self.cfg.use_match and pts_local.shape[0] >= 5 \
+                and self.grid.n_updates >= self.cfg.match_warmup_updates:
+            # 2) 扫描匹配修正。两级门限：
+            #    a) score >= min_score（绝对质量）
+            #    b) score >= 当前预测位姿得分 + accept_margin（迟滞，抑制静止抖动）
             cand, score = self.matcher.match(scan, self.pose)
-            if score >= self.matcher.min_score:
+            base_score = self.matcher.score(scan, self.pose)
+            if score >= self.matcher.min_score and score >= base_score + self.cfg.accept_margin:
                 self.pose = cand
                 matched = True
 

@@ -22,13 +22,15 @@ func _ready() -> void:
 signal mode_toggle_requested
 
 
-func update_text(ws_ok: bool, mode: String, send_hz: float, seq: int,
+func update_text(ws_ok: bool, mode: String, physics_hz: float, seq: int,
 		truth: Vector3, odom: Vector3) -> void:
+	# theta 显示统一 wrap 到 [-PI, PI]：里程计是连续积分值（可超 2PI），
+	# 真值已 wrap，不统一会目视误判成 360° 漂移。
 	_label.text = "\n".join([
 		"WS: %s   模式: %s" % ["已连接" if ws_ok else "未连接（等待 Python 端 ws://127.0.0.1:9094）", mode],
-		"上行: %.1f Hz   seq=%d" % [send_hz, seq],
-		"真值:   (%6.1f, %6.1f, %5.2f)" % [truth.x, truth.y, truth.z],
-		"里程计: (%6.1f, %6.1f, %5.2f)" % [odom.x, odom.y, odom.z],
+		"物理帧率: %.1f Hz   seq=%d" % [physics_hz, seq],
+		"真值:   (%6.1f, %6.1f, %5.2f)" % [truth.x, truth.y, wrapf(truth.z, -PI, PI)],
+		"里程计: (%6.1f, %6.1f, %5.2f)" % [odom.x, odom.y, wrapf(odom.z, -PI, PI)],
 		"键盘: 方向键/WASD 遥控（manual 模式）",
 	])
 

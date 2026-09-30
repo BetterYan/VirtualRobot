@@ -21,6 +21,7 @@ from vrobot.control.explorer import FrontierExplorer, ReactiveExplorer
 from vrobot.control.hybrid_explorer import HybridExplorer
 from vrobot.eval.evaluator import PoseEvaluator
 from vrobot.slam.slam2d import Slam2D, SlamConfig
+from vrobot.viz.debug_viewer import DebugViewer
 from vrobot.viz.map_viewer import MapViewer
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
@@ -38,7 +39,7 @@ def load_config(path: str | None) -> dict:
         return yaml.safe_load(f) or {}
 
 
-async def run(cfg: dict, show_view: bool, force_auto: bool | None) -> None:
+async def run(cfg: dict, show_view: bool, show_debug: bool, force_auto: bool | None) -> None:
     srv_cfg = cfg.get("server", {})
     server = SimServer(srv_cfg.get("host", "127.0.0.1"), int(srv_cfg.get("port", 9094)))
 
@@ -89,6 +90,8 @@ async def run(cfg: dict, show_view: bool, force_auto: bool | None) -> None:
 
     evaluator = PoseEvaluator() if cfg.get("eval", {}).get("enabled", True) else None
     viewer = MapViewer(enabled=show_view, cell_size=slam.grid.cell_size)
+    debug = DebugViewer(enabled=show_debug)
+    debug.set_min_score(slam.matcher.min_score)
 
     await server.start()
     print("=" * 62)
@@ -111,8 +114,13 @@ async def run(cfg: dict, show_view: bool, force_auto: bool | None) -> None:
             if frame is not None:
                 result = slam.process(frame.odom, frame.scan)
                 frame_count += 1
-                if evaluator and server.ground_truth is not None:
-                    evaluator.update(result.pose, server.ground_truth)
+                if server.ground_truth is not None:
+                    if evaluator:
+                        evaluator.update(result.pose, server.ground_truth)
+                    if debug.enabled:
+                        gt = server.ground_truth
+                        debug.push((gt.x, gt.y, gt.theta), frame.odom.as_tuple(), result.pose,
+                                   score=result.score, matched=result.matched)
 
             now = time.time()
             if mode_state["auto"] and explorer is not None and server.connected.is_set() \
@@ -137,10 +145,12 @@ async def run(cfg: dict, show_view: bool, force_auto: bool | None) -> None:
                 if frame_count:
                     s = evaluator.stats() if evaluator else {"n": 0}
                     if s.get("n"):
+                        drift = (f" 漂移率: {s['drift_per_100px']:.2f}px/100px（真值里程 {s['gt_path_px']:.0f}px）"
+                                 if "drift_per_100px" in s else "")
                         print(
                             f"[stats] frames={frame_count} pose=({slam.pose[0]:.0f},{slam.pose[1]:.0f}) "
                             f"误差: mean={s['pos_mean']:.1f}px last={s['pos_last']:.1f}px "
-                            f"max={s['pos_max']:.1f}px | {s['th_mean_deg']:.1f}deg"
+                            f"max={s['pos_max']:.1f}px | {s['th_mean_deg']:.1f}deg{drift}"
                         )
                     else:
                         print(f"[stats] frames={frame_count} pose=({slam.pose[0]:.0f},{slam.pose[1]:.0f})（无真值）")
@@ -149,6 +159,7 @@ async def run(cfg: dict, show_view: bool, force_auto: bool | None) -> None:
     except asyncio.CancelledError:
         pass
     finally:
+        debug.close()
         viewer.close()
         await server.stop()
 
@@ -159,6 +170,7 @@ def main() -> None:
     parser.add_argument("--host", default=None)
     parser.add_argument("--port", type=int, default=None)
     parser.add_argument("--no-view", action="store_true", help="禁用地图可视化窗口")
+    parser.add_argument("--no-debug", action="store_true", help="禁用调试窗口（真值 vs 传感器差异曲线）")
     parser.add_argument("--auto", dest="auto", action="store_true", default=None,
                         help="强制开启自动探索（覆盖配置）")
     parser.add_argument("--no-auto", dest="auto", action="store_false", default=None,
@@ -172,7 +184,8 @@ def main() -> None:
         cfg.setdefault("server", {})["port"] = args.port
 
     try:
-        asyncio.run(run(cfg, show_view=not args.no_view, force_auto=args.auto))
+        asyncio.run(run(cfg, show_view=not args.no_view, show_debug=not args.no_debug,
+                        force_auto=args.auto))
     except KeyboardInterrupt:
         print("\n退出。")
 
