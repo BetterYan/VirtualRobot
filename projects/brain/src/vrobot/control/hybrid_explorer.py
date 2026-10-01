@@ -107,6 +107,7 @@ class HybridExplorer:
         self._follow_arc = 0.0
         self._follow_prev: tuple[float, float] | None = None
         self._follow_frames = 0
+        self._prev_diff = 0.0                        # 上一帧航向误差（微分阻尼用）
         self._d_s: float | None = None    # 平滑后墙垂距
         self._a_s: float | None = None    # 平滑后墙-航向偏角
 
@@ -437,8 +438,14 @@ class HybridExplorer:
                 continue
             desired = float(np.arctan2(wy - pose[1], wx - pose[0]))
             diff = (desired - pose[2] + np.pi) % (2 * np.pi) - np.pi
-            w_cmd = max(-self.p.angular, min(self.p.angular, 2.5 * diff))
-            v = self.p.linear if abs(diff) < 0.5 else self.p.linear_slow
+            # 微分阻尼：抑制误差收敛时的超调（蛇形根源）
+            d_diff = (diff - self._prev_diff) * 20.0     # 20Hz 控制频率
+            self._prev_diff = diff
+            w_cmd = max(-self.p.angular,
+                        min(self.p.angular, 2.5 * diff - 0.6 * d_diff))
+            # 连续调速：替代二值硬切换，避免速度跳变诱发超调极限环
+            ratio = max(self.p.linear_slow / self.p.linear, 1.0 - 1.2 * abs(diff))
+            v = self.p.linear * ratio
             return (v, w_cmd)
         # 当前段走完 → 路点达成，推进
         if self._cov_path_wp is not None:

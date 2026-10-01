@@ -175,6 +175,7 @@ class FrontierExplorer:
         self._area_hist: deque[tuple[float, float]] = deque(maxlen=self.p.area_window)
         self._blacklist: list[tuple[int, int]] = []  # 被放弃的 frontier 质心
         self._target: _Frontier | None = None
+        self._prev_diff = 0.0                        # 上一帧航向误差（微分阻尼用）
 
     # ---- 主入口 ----
 
@@ -337,8 +338,14 @@ class FrontierExplorer:
                 continue
             desired = float(np.arctan2(wy - pose[1], wx - pose[0]))
             diff = (desired - pose[2] + np.pi) % (2 * np.pi) - np.pi
-            w_cmd = max(-self.p.angular, min(self.p.angular, 2.5 * diff))
-            v = self.p.linear if abs(diff) < 0.5 else self.p.linear_slow
+            # 微分阻尼：误差收敛越快，反向修正越强，抑制超调（蛇形根源）
+            d_diff = (diff - self._prev_diff) * 20.0     # 20Hz 控制频率
+            self._prev_diff = diff
+            w_cmd = max(-self.p.angular,
+                        min(self.p.angular, 2.5 * diff - 0.6 * d_diff))
+            # 连续调速：误差越大越慢，替代二值硬切换（速度跳变会诱发超调极限环）
+            ratio = max(self.p.linear_slow / self.p.linear, 1.0 - 1.2 * abs(diff))
+            v = self.p.linear * ratio
             return (v, w_cmd)
         self._path = []
         return (self.p.linear_slow, 0.0)
