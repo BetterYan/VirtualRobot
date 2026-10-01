@@ -10,7 +10,6 @@ from __future__ import annotations
 import argparse
 import asyncio
 import logging
-import sys
 import time
 from pathlib import Path
 
@@ -22,9 +21,12 @@ from vrobot.control.hybrid_explorer import HybridExplorer
 from vrobot.eval.evaluator import PoseEvaluator
 from vrobot.slam.slam2d import Slam2D, SlamConfig
 from vrobot.viz.debug_viewer import DebugViewer
+from vrobot.viz.lidar_viewer import LidarViewer
 from vrobot.viz.map_viewer import MapViewer
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
+logging.basicConfig(
+    level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s"
+)
 log = logging.getLogger("slam_node")
 
 
@@ -39,7 +41,13 @@ def load_config(path: str | None) -> dict:
         return yaml.safe_load(f) or {}
 
 
-async def run(cfg: dict, show_view: bool, show_debug: bool, force_auto: bool | None) -> None:
+async def run(
+    cfg: dict,
+    show_view: bool,
+    show_debug: bool,
+    show_lidar: bool,
+    force_auto: bool | None,
+) -> None:
     srv_cfg = cfg.get("server", {})
     server = SimServer(srv_cfg.get("host", "127.0.0.1"), int(srv_cfg.get("port", 9094)))
 
@@ -52,6 +60,7 @@ async def run(cfg: dict, show_view: bool, show_debug: bool, force_auto: bool | N
 
     exp_cfg = cfg.get("explorer", {})
     exp_mode = str(exp_cfg.get("mode", "hybrid"))
+    explorer: HybridExplorer | FrontierExplorer | ReactiveExplorer | None
     if exp_mode == "hybrid":
         explorer = HybridExplorer(
             cell_size=slam.grid.cell_size,
@@ -78,18 +87,27 @@ async def run(cfg: dict, show_view: bool, show_debug: bool, force_auto: bool | N
         )
     else:  # off
         explorer = None
-    auto_enabled = force_auto if force_auto is not None else bool(exp_cfg.get("enabled", False))
+    auto_enabled = (
+        force_auto if force_auto is not None else bool(exp_cfg.get("enabled", False))
+    )
     mode_state = {"auto": auto_enabled}
 
     def _on_mode_changed(mode_name: str) -> None:
         """Godot 侧 set_mode 上行请求：动态开关自动探索。"""
         mode_state["auto"] = mode_name == "auto"
-        log.info("模式切换: %s（自动探索 %s）", mode_name, "开" if mode_state["auto"] else "关")
+        log.info(
+            "模式切换: %s（自动探索 %s）",
+            mode_name,
+            "开" if mode_state["auto"] else "关",
+        )
 
     server.on_mode_changed = _on_mode_changed
 
     evaluator = PoseEvaluator() if cfg.get("eval", {}).get("enabled", True) else None
     viewer = MapViewer(enabled=show_view, cell_size=slam.grid.cell_size)
+    lidar_view = LidarViewer(
+        enabled=show_lidar, range_max=float(cfg.get("lidar", {}).get("range_max", 320.0))
+    )
     debug = DebugViewer(enabled=show_debug)
     debug.set_min_score(slam.matcher.min_score)
 
@@ -97,7 +115,9 @@ async def run(cfg: dict, show_view: bool, show_debug: bool, force_auto: bool | N
     print("=" * 62)
     print(" vrobot 2D SLAM 节点已启动")
     print(f" 监听: ws://{server.host}:{server.port}  （请随后启动 Godot sim2d 场景）")
-    print(f" 探索模式: {exp_mode}  自动驾驶: {'开' if mode_state['auto'] else '关'}（Godot HUD 按钮可切换）")
+    print(
+        f" 探索模式: {exp_mode}  自动驾驶: {'开' if mode_state['auto'] else '关'}（Godot HUD 按钮可切换）"
+    )
     print(" Ctrl+C 退出")
     print("=" * 62)
 
@@ -118,13 +138,22 @@ async def run(cfg: dict, show_view: bool, show_debug: bool, force_auto: bool | N
                     if evaluator:
                         evaluator.update(result.pose, server.ground_truth)
                     if debug.enabled:
-                        gt = server.ground_truth
-                        debug.push((gt.x, gt.y, gt.theta), frame.odom.as_tuple(), result.pose,
-                                   score=result.score, matched=result.matched)
+                        truth = server.ground_truth
+                        debug.push(
+                            (truth.x, truth.y, truth.theta),
+                            frame.odom.as_tuple(),
+                            result.pose,
+                            score=result.score,
+                            matched=result.matched,
+                        )
 
             now = time.time()
-            if mode_state["auto"] and explorer is not None and server.connected.is_set() \
-                    and now - last_cmd_t >= cmd_interval:
+            if (  # noqa: SIM102
+                mode_state["auto"]
+                and explorer is not None
+                and server.connected.is_set()
+                and now - last_cmd_t >= cmd_interval
+            ):
                 if frame is not None:
                     linear, angular = explorer.update(slam, frame.scan)
                     server.send_cmd_vel(linear, angular, seq)
@@ -132,12 +161,24 @@ async def run(cfg: dict, show_view: bool, show_debug: bool, force_auto: bool | N
                     last_cmd_t = now
                     if getattr(explorer, "done", False) and not done_reported:
                         done_reported = True
-                        print(">>> 探索完成：可达范围内已无可达边界，地图构建完毕。"
-                              "（Godot 切回 manual 模式可手动查看）")
+                        print(
+                            ">>> 探索完成：可达范围内已无可达边界，地图构建完毕。"
+                            "（Godot 切回 manual 模式可手动查看）"
+                        )
+
+            if lidar_view.enabled and frame is not None and frame_count % 2 == 0:
+                lidar_view.update(frame.scan)
 
             if viewer.enabled and frame is not None and frame_count % 3 == 0:
-                gt = (server.ground_truth.x, server.ground_truth.y, server.ground_truth.theta) \
-                    if (evaluator and server.ground_truth) else None
+                gt = (
+                    (
+                        server.ground_truth.x,
+                        server.ground_truth.y,
+                        server.ground_truth.theta,
+                    )
+                    if (evaluator and server.ground_truth)
+                    else None
+                )
                 viewer.update(slam, gt)
 
             if now - last_stats_t >= 3.0:
@@ -145,21 +186,27 @@ async def run(cfg: dict, show_view: bool, show_debug: bool, force_auto: bool | N
                 if frame_count:
                     s = evaluator.stats() if evaluator else {"n": 0}
                     if s.get("n"):
-                        drift = (f" 漂移率: {s['drift_per_100px']:.2f}px/100px（真值里程 {s['gt_path_px']:.0f}px）"
-                                 if "drift_per_100px" in s else "")
+                        drift = (
+                            f" 漂移率: {s['drift_per_100px']:.2f}px/100px（真值里程 {s['gt_path_px']:.0f}px）"
+                            if "drift_per_100px" in s
+                            else ""
+                        )
                         print(
                             f"[stats] frames={frame_count} pose=({slam.pose[0]:.0f},{slam.pose[1]:.0f}) "
                             f"误差: mean={s['pos_mean']:.1f}px last={s['pos_last']:.1f}px "
                             f"max={s['pos_max']:.1f}px | {s['th_mean_deg']:.1f}deg{drift}"
                         )
                     else:
-                        print(f"[stats] frames={frame_count} pose=({slam.pose[0]:.0f},{slam.pose[1]:.0f})（无真值）")
+                        print(
+                            f"[stats] frames={frame_count} pose=({slam.pose[0]:.0f},{slam.pose[1]:.0f})（无真值）"
+                        )
 
             await asyncio.sleep(0.002)  # ~200Hz 空转，消费节拍由 Godot 20Hz 决定
     except asyncio.CancelledError:
         pass
     finally:
         debug.close()
+        lidar_view.close()
         viewer.close()
         await server.stop()
 
@@ -170,11 +217,26 @@ def main() -> None:
     parser.add_argument("--host", default=None)
     parser.add_argument("--port", type=int, default=None)
     parser.add_argument("--no-view", action="store_true", help="禁用地图可视化窗口")
-    parser.add_argument("--no-debug", action="store_true", help="禁用调试窗口（真值 vs 传感器差异曲线）")
-    parser.add_argument("--auto", dest="auto", action="store_true", default=None,
-                        help="强制开启自动探索（覆盖配置）")
-    parser.add_argument("--no-auto", dest="auto", action="store_false", default=None,
-                        help="强制关闭自动探索（覆盖配置）")
+    parser.add_argument(
+        "--no-debug", action="store_true", help="禁用调试窗口（真值 vs 传感器差异曲线）"
+    )
+    parser.add_argument(
+        "--no-lidar", action="store_true", help="禁用激光雷达视图窗口"
+    )
+    parser.add_argument(
+        "--auto",
+        dest="auto",
+        action="store_true",
+        default=None,
+        help="强制开启自动探索（覆盖配置）",
+    )
+    parser.add_argument(
+        "--no-auto",
+        dest="auto",
+        action="store_false",
+        default=None,
+        help="强制关闭自动探索（覆盖配置）",
+    )
     args = parser.parse_args()
 
     cfg = load_config(args.config)
@@ -184,8 +246,15 @@ def main() -> None:
         cfg.setdefault("server", {})["port"] = args.port
 
     try:
-        asyncio.run(run(cfg, show_view=not args.no_view, show_debug=not args.no_debug,
-                        force_auto=args.auto))
+        asyncio.run(
+            run(
+                cfg,
+                show_view=not args.no_view,
+                show_debug=not args.no_debug,
+                show_lidar=not args.no_lidar,
+                force_auto=args.auto,
+            )
+        )
     except KeyboardInterrupt:
         print("\n退出。")
 

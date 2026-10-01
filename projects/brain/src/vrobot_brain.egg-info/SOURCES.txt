@@ -8,9 +8,11 @@ src/vrobot/comm/messages.py
 src/vrobot/comm/server.py
 src/vrobot/control/__init__.py
 src/vrobot/control/explorer.py
+src/vrobot/control/hybrid_explorer.py
 src/vrobot/eval/__init__.py
 src/vrobot/eval/evaluator.py
 src/vrobot/planning/__init__.py
+src/vrobot/planning/path_finder.py
 src/vrobot/sensors/__init__.py
 src/vrobot/sensors/models.py
 src/vrobot/slam/__init__.py
@@ -20,6 +22,7 @@ src/vrobot/slam/particle.py
 src/vrobot/slam/scan_matcher.py
 src/vrobot/slam/slam2d.py
 src/vrobot/viz/__init__.py
+src/vrobot/viz/debug_viewer.py
 src/vrobot/viz/map_viewer.py
 src/vrobot_brain.egg-info/PKG-INFO
 src/vrobot_brain.egg-info/SOURCES.txt
@@ -27,6 +30,8 @@ src/vrobot_brain.egg-info/dependency_links.txt
 src/vrobot_brain.egg-info/requires.txt
 src/vrobot_brain.egg-info/top_level.txt
 tests/test_comm_loop.py
+tests/test_frontier_exploration.py
 tests/test_grid_map.py
+tests/test_hybrid_exploration.py
 tests/test_scan_matcher.py
 tests/test_slam2d.py

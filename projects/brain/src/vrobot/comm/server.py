@@ -9,8 +9,9 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+from collections.abc import Callable
 
-from websockets.asyncio.server import serve
+from websockets.asyncio.server import Server, serve
 from websockets.exceptions import ConnectionClosed
 
 from vrobot.comm.messages import (
@@ -35,9 +36,9 @@ class SimServer:
         self.hello: HelloInfo | None = None
         self.connected = asyncio.Event()
         self.remote_mode = "manual"  # Godot 侧当前模式（set_mode 同步）
-        self.on_mode_changed = None  # callable(mode: str)，模式变化时回调
+        self.on_mode_changed: Callable[[str], None] | None = None  # 模式变化时回调
         self._outgoing: asyncio.Queue[str] = asyncio.Queue(maxsize=50)
-        self._server = None
+        self._server: Server | None = None
 
     # ---- 生命周期 ----
 
