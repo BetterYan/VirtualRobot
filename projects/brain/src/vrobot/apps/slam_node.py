@@ -56,7 +56,27 @@ async def run(
         scan_match=cfg.get("scan_match", {}),
         use_match=cfg.get("slam", {}).get("use_match", True),
     )
-    slam = Slam2D(slam_cfg)
+
+    slam_section = cfg.get("slam", {})
+    engine = str(slam_section.get("engine", "builtin")).lower()
+    if engine == "cartographer":
+        from vrobot.slam.cartographer_engine import (
+            CartographerEngineConfig,
+            CartographerSLAM2D,
+        )
+
+        eng_cfg = CartographerEngineConfig(
+            grid=cfg.get("grid", {}),
+            **slam_section.get("cartographer", {}),
+        )
+        slam = CartographerSLAM2D(eng_cfg, sensor=cfg.get("sensor", {}))
+        log.info("SLAM 引擎: cartographer（scale=%.3f m/px, max_range=%.0fpx）",
+                 eng_cfg.scale, slam._range_max_px)
+    elif engine in ("builtin", "tinyslam", ""):
+        slam = Slam2D(slam_cfg)
+        log.info("SLAM 引擎: builtin（TinySLAM 式）")
+    else:
+        raise ValueError(f"未知 SLAM 引擎: {engine!r}（可选 builtin / cartographer）")
 
     exp_cfg = cfg.get("explorer", {})
     exp_mode = str(exp_cfg.get("mode", "hybrid"))

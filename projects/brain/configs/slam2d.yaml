@@ -26,7 +26,21 @@ scan_match:
   min_score: 0.30       # 命中点平均概率低于此值则不采纳匹配结果
 
 slam:
-  use_match: true       # false = 纯里程计（对照基线）
+  engine: cartographer   # builtin=TinySLAM 式内置核心 | cartographer=Google Cartographer
+  use_match: true       # false = 纯里程计（对照基线）；仅 builtin 引擎使用
+  cartographer:          # 仅 engine: cartographer 时生效
+    scale: 0.05          # 单位换算 m/px：Godot 像素 -> Cartographer 米（1px=5cm）
+    min_range_px: 14.0   # 最近有效距离 px（≈机器人半径，过滤自身回波）；
+                         #   -> Lua min_range = 14px * 0.05 = 0.70m
+    use_odometry: true   # 将 Godot 里程计作为 Cartographer 里程计输入
+    num_background_threads: 2
+    optimize_every_n_nodes: 30
+    map_sync_interval: 3 # 每 N 帧把 Cartographer 子图概率栅格同步到桥接栅格
+    min_score: 0.30      # matched 判定门限（与 scan_match.min_score 对齐）
+                         #   最远距离: sensor.range_max(320px) * 0.05 = 16.0m 自动写入 Lua；
+                         #   激光线数: 以 Godot hello/帧内 angle_inc 为准，Cartographer 直接管云；
+                         #   注意: cartographer 引擎下地图完全来自其子图，grid 段的
+                         #   l_hit/l_miss 等建图参数不再参与建图（仅决定桥接栅格分辨率/尺寸）
 
 explorer:
   mode: hybrid           # hybrid=沿边→弓形→frontier | frontier=纯frontier | reactive=反应式避障(调试) | off
