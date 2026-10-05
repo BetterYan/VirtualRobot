@@ -13,6 +13,7 @@ import logging
 import numpy as np
 
 log = logging.getLogger(__name__)
+from vrobot.viz.event_pump import pump as _pump_events
 
 
 class LidarViewer:
@@ -124,9 +125,9 @@ class LidarViewer:
                 color="#c9d1d9",
                 fontsize=10,
             )
-            # 不用 plt.pause()：draw_idle + flush_events 避免抢焦点（同 MapViewer）
+            # 不用 plt.pause()：事件泵方案见 event_pump.py（同 MapViewer）
             self._fig.canvas.draw_idle()
-            self._fig.canvas.flush_events()
+            _pump_events(self._fig)
             self._frame += 1
         except Exception as e:
             if not getattr(self, "_warned", False):

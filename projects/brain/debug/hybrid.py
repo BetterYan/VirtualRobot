@@ -1,11 +1,16 @@
 """临时调试脚本：插桩 HybridExplorer，量化沿边摆动与覆盖阶段行为。
 
-用法: cd projects/brain && uv run python debug_hybrid.py
+用法: cd projects/brain && uv run python debug/hybrid.py
 """
 
 import logging
 import math
 import sys
+from pathlib import Path
+
+_root = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(_root))          # brain 根: tests 包
+sys.path.insert(0, str(_root / "src"))  # vrobot 包
 
 logging.basicConfig(level=logging.INFO, format="%(message)s")
 

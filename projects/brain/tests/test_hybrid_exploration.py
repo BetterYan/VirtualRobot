@@ -66,7 +66,7 @@ def hybrid_run():
     world = SimWorld()
     robot = SimRobot(world, (100.0, 90.0, 0.0), SimParams(seed=11))
     slam = Slam2D(SlamConfig(use_match=True))
-    explorer = HybridExplorer(cell_size=slam.grid.cell_size)
+    explorer = HybridExplorer(cell_size=slam.grid.cell_size, async_plan=False)  # e2e 确定性
 
     max_steps = 12000  # 20Hz → 600s 仿真时长上限（三阶段比纯 frontier 更耗时）
     last_frame = None

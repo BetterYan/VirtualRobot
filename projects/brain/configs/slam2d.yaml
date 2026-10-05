@@ -41,22 +41,34 @@ slam:
                          #   激光线数: 以 Godot hello/帧内 angle_inc 为准，Cartographer 直接管云；
                          #   注意: cartographer 引擎下地图完全来自其子图，grid 段的
                          #   l_hit/l_miss 等建图参数不再参与建图（仅决定桥接栅格分辨率/尺寸）
+                         #   概率栅格插入器: 内置 Lua 已调 hit=0.75/miss=0.30（默认
+                         #   0.55/0.49 过于保守，桥接后自由格够不着 free_below 阈值）
 
 explorer:
-  mode: hybrid           # hybrid=沿边→弓形→frontier | frontier=纯frontier | reactive=反应式避障(调试) | off
+  mode: tour             # tour=纯 FUEL-lite（聚类→观察点→TSP 环游→纯追踪，见 control/tour_explorer.py）
+                         #   | hybrid=沿边→弓形→frontier（frontier 阶段默认用 FUEL-lite）
+                         #   | frontier=经典贪心 frontier（Yamauchi） | reactive=反应式避障(调试) | off
   enabled: true           # 自动驾驶默认开启（Godot HUD 按钮可切 manual 遥控）
-  linear: 60.0
-  angular: 1.5
+  linear: 60.0            # 巡航速度 px/s（>75 会劣化扫描匹配，建图反而更慢）
+  angular: 1.5            # 最大角速度 rad/s
   inflate_cells: 2        # A* 障碍膨胀格数（≈机器人半径 14px / 8px 格）
   min_frontier_size: 4    # 忽略过小的未知碎片
   hybrid:                 # hybrid 模式参数（沿边→弓形→frontier 三阶段）
     lane_pitch: 4         # 弓形车道行距（格，4格=32px）
     min_run: 4            # 车道最小长度（格）
+    frontier_mode: tour   # frontier 阶段后端：tour=FUEL-lite | classic=旧贪心 FrontierExplorer
   reactive:               # reactive 模式参数
     linear: 55.0
     angular: 1.6
     front_dist: 60.0
     beam_spread: 7
+  # tour 模式（及 hybrid 的 tour 后端）关键参数，默认值见 control/tour_explorer.py TourParams：
+  #   lambda_cost=20        打分 = 信息增益 / (λ+路径代价)，越小越愿意为高增益跑远路
+  #   vp_min_dist=4         观察点距机器人最小距离（格），防"脚下观察点"死锁
+  #   lookahead=50          纯追踪前视距离 px（蛇形根治点之一）
+  #   w_rate_limit=0.8      角速度帧间变化上限 rad（20Hz → 16 rad/s²）
+  #   blacklist_ttl=900     不可达观察点黑名单存活帧数（45s），过期自动解除
+  #   stall_builds=10       跨实际位移的环游重建多次无地图进展 → 判定建图收敛
 
 eval:
   enabled: true         # 消费 ground_truth 计算位姿误差（不影响算法）

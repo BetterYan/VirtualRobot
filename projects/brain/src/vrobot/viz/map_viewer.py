@@ -7,6 +7,7 @@ import logging
 import numpy as np
 
 log = logging.getLogger(__name__)
+from vrobot.viz.event_pump import pump as _pump_events
 
 
 class MapViewer:
@@ -52,7 +53,9 @@ class MapViewer:
         try:
             prob = slam.grid.prob()
             if self._img is None:
-                self._img = self._ax.imshow(prob, cmap="gray_r", vmin=0, vmax=1, animated=True)
+                # 不加 animated=True：无 blit 循环时 TkAgg 常规重绘会跳过
+                # animated artist —— 表现为只见轨迹不见地图（全白）
+                self._img = self._ax.imshow(prob, cmap="gray_r", vmin=0, vmax=1)
                 (self._traj_line,) = self._ax.plot([], [], "r-", lw=1.2, label="est traj")
                 (self._robot_marker,) = self._ax.plot([], [], "r+", ms=12)
                 (self._gt_marker,) = self._ax.plot([], [], "g+", ms=12, label="ground truth")
@@ -67,9 +70,10 @@ class MapViewer:
                 self._gt_marker.set_data([gt_pose[0] / self.cell_size - 0.5], [gt_pose[1] / self.cell_size - 0.5])
             self._ax.set_title(f"SLAM map  frame={self._frame}")
             # 不用 plt.pause()：内部 manager.show() 会反复抬顶+抢焦点。
-            # draw_idle + flush_events 只重绘与处理事件，Z 序/焦点交给系统。
+            # draw_idle 后必须主动泵 GUI 事件（asyncio 循环无 Tk mainloop，
+            # 否则 Windows 判定窗口未响应并冻结重绘）。
             self._fig.canvas.draw_idle()
-            self._fig.canvas.flush_events()
+            _pump_events(self._fig)
             self._frame += 1
         except Exception as e:
             log.debug("viewer update failed: %s", e)

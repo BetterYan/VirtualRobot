@@ -73,6 +73,9 @@ class HybridParams:
     final_cov_min: int = 30       # 触发兜底覆盖的最小未扫格数
     frontier_check_every: int = 100   # frontier 阶段检查新区的间隔（帧）
     cov_cooldown: int = 200       # coverage 空手而归后，禁止立刻再进 coverage（帧）
+    # ---- frontier 阶段后端 ----
+    frontier_mode: str = "tour"   # "tour"=FUEL-lite（默认）| "classic"=旧 FrontierExplorer
+    async_plan: bool = True       # tour 后端的后台规划线程（防指令阻塞走停）
     # ---- 安全 ----
     front_panic: float = 26.0     # 前方紧急转向距离（px）
     stuck_window: int = 50
@@ -89,7 +92,7 @@ class HybridExplorer:
         self.phase = SEEK_WALL
         self.visited_phases: list[str] = [SEEK_WALL]
 
-        self._frontier_ex = FrontierExplorer(
+        frontier_kwargs = dict(
             cell_size=cell_size,
             linear=self.p.linear,
             linear_slow=self.p.linear_slow,
@@ -98,6 +101,13 @@ class HybridExplorer:
             occupied_above=self.p.occupied_above,
             inflate_cells=self.p.inflate_cells,
         )
+        if self.p.frontier_mode == "tour":
+            from vrobot.control.tour_explorer import TourExplorer
+            self._frontier_ex: TourExplorer | FrontierExplorer = TourExplorer(
+                **frontier_kwargs, async_plan=self.p.async_plan
+            )
+        else:
+            self._frontier_ex = FrontierExplorer(**frontier_kwargs)
 
         self._swept: np.ndarray | None = None       # (h,w) bool，延迟到首帧建
         self._disk = self._make_disk(self.p.sweep_radius)
@@ -378,7 +388,10 @@ class HybridExplorer:
                     log.info("[frontier] frontier 不可达但未扫区 %d 格 → 兜底弓形覆盖（剩 %d 轮）",
                              new_free, self._final_cov_budget)
                     self._frontier_ex.done = False
-                    self._frontier_ex._replan_countdown = 0
+                    if hasattr(self._frontier_ex, "revive"):
+                        self._frontier_ex.revive()   # TourExplorer：重置规划状态
+                    else:
+                        self._frontier_ex._replan_countdown = 0
                     self._enter(COVERAGE)
                     return (0.0, 0.0)
             log.info("[frontier] 无可达 frontier，且无未扫自由区 → 建图完成")

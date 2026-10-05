@@ -8,3 +8,4 @@ Requires-Dist: websockets>=11.0
 Requires-Dist: pyyaml>=6.0
 Requires-Dist: matplotlib>=3.7
 Requires-Dist: pybind11>=3.1.0
+Requires-Dist: opencv-python>=5.0.0.93

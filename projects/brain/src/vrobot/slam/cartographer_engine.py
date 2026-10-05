@@ -114,11 +114,19 @@ TRAJECTORY_BUILDER_2D.min_z = -0.1
 TRAJECTORY_BUILDER_2D.max_z = 0.1
 TRAJECTORY_BUILDER_2D.missing_data_ray_length = {max_range_m:.4f}
 -- 在线相关匹配搜索窗小且评分粗糙：有可靠里程计时反而拉偏位姿，故仅在
--- 无里程计输入时启用（Cartographer 最佳实践）
+-- 无里程计输入时启用（Cartographer 最佳实践）。
+-- 已知缺陷（待查 native 层/extrapolator）：纯旋转时角跟踪欠转 ~13%·转角，
+-- 误差随转角线性增长（Stage2 T3 可复现），是探索地图角向发散的根源。
 TRAJECTORY_BUILDER_2D.use_online_correlative_scan_matching = {str(not cfg.use_odometry).lower()}
 TRAJECTORY_BUILDER_2D.motion_filter.max_time_seconds = 5.
 TRAJECTORY_BUILDER_2D.motion_filter.max_distance_meters = {0.5 * cfg.scale:.4f}
 TRAJECTORY_BUILDER_2D.motion_filter.max_angle_radians = math.rad(2)
+-- 概率栅格插入器：默认 hit=0.55/miss=0.49 过于保守，单次观测后概率仍贴着 0.5，
+-- 桥接成 log-odds 后自由格永远够不着探索器的 free_below(-0.3) → 全图"半观测"。
+-- 调强证据强度：单次 miss 即压到 p≈0.30（log-odds≈-0.85），单次 hit≈0.75（+1.10）。
+TRAJECTORY_BUILDER_2D.submaps.range_data_inserter.probability_grid_range_data_inserter.hit_probability = 0.75
+TRAJECTORY_BUILDER_2D.submaps.range_data_inserter.probability_grid_range_data_inserter.miss_probability = 0.30
+TRAJECTORY_BUILDER_2D.submaps.range_data_inserter.probability_grid_range_data_inserter.insert_free_space = true
 
 POSE_GRAPH.optimize_every_n_nodes = {cfg.optimize_every_n_nodes}
 POSE_GRAPH.constraint_builder.min_score = 0.65

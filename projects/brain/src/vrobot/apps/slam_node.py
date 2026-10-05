@@ -22,7 +22,7 @@ from vrobot.eval.evaluator import PoseEvaluator
 from vrobot.slam.slam2d import Slam2D, SlamConfig
 from vrobot.viz.debug_viewer import DebugViewer
 from vrobot.viz.lidar_viewer import LidarViewer
-from vrobot.viz.map_viewer import MapViewer
+from vrobot.viz.fast_map_viewer import create_map_viewer
 
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s"
@@ -70,8 +70,11 @@ async def run(
             **slam_section.get("cartographer", {}),
         )
         slam = CartographerSLAM2D(eng_cfg, sensor=cfg.get("sensor", {}))
-        log.info("SLAM 引擎: cartographer（scale=%.3f m/px, max_range=%.0fpx）",
-                 eng_cfg.scale, slam._range_max_px)
+        log.info(
+            "SLAM 引擎: cartographer（scale=%.3f m/px, max_range=%.0fpx）",
+            eng_cfg.scale,
+            slam._range_max_px,
+        )
     elif engine in ("builtin", "tinyslam", ""):
         slam = Slam2D(slam_cfg)
         log.info("SLAM 引擎: builtin（TinySLAM 式）")
@@ -80,7 +83,7 @@ async def run(
 
     exp_cfg = cfg.get("explorer", {})
     exp_mode = str(exp_cfg.get("mode", "hybrid"))
-    explorer: HybridExplorer | FrontierExplorer | ReactiveExplorer | None
+    explorer: HybridExplorer | FrontierExplorer | ReactiveExplorer | object | None
     if exp_mode == "hybrid":
         explorer = HybridExplorer(
             cell_size=slam.grid.cell_size,
@@ -89,12 +92,23 @@ async def run(
             inflate_cells=exp_cfg.get("inflate_cells", 2),
             lane_pitch=exp_cfg.get("hybrid", {}).get("lane_pitch", 4),
             min_run=exp_cfg.get("hybrid", {}).get("min_run", 4),
+            frontier_mode=exp_cfg.get("hybrid", {}).get("frontier_mode", "tour"),
         )
     elif exp_mode == "frontier":
         explorer = FrontierExplorer(
             cell_size=slam.grid.cell_size,
             linear=exp_cfg.get("linear", 60.0),
             angular=exp_cfg.get("angular", 2.4),
+            inflate_cells=exp_cfg.get("inflate_cells", 2),
+            min_frontier_size=exp_cfg.get("min_frontier_size", 4),
+        )
+    elif exp_mode == "tour":
+        from vrobot.control.tour_explorer import TourExplorer
+
+        explorer = TourExplorer(
+            cell_size=slam.grid.cell_size,
+            linear=exp_cfg.get("linear", 60.0),
+            angular=exp_cfg.get("angular", 1.5),
             inflate_cells=exp_cfg.get("inflate_cells", 2),
             min_frontier_size=exp_cfg.get("min_frontier_size", 4),
         )
@@ -124,9 +138,10 @@ async def run(
     server.on_mode_changed = _on_mode_changed
 
     evaluator = PoseEvaluator() if cfg.get("eval", {}).get("enabled", True) else None
-    viewer = MapViewer(enabled=show_view, cell_size=slam.grid.cell_size)
+    viewer = create_map_viewer(enabled=show_view, cell_size=slam.grid.cell_size)
     lidar_view = LidarViewer(
-        enabled=show_lidar, range_max=float(cfg.get("lidar", {}).get("range_max", 320.0))
+        enabled=show_lidar,
+        range_max=float(cfg.get("lidar", {}).get("range_max", 320.0)),
     )
     debug = DebugViewer(enabled=show_debug)
     debug.set_min_score(slam.matcher.min_score)
@@ -211,14 +226,20 @@ async def run(
                             if "drift_per_100px" in s
                             else ""
                         )
+                        _lo = slam.grid._logodds
+                        _fr = int((_lo <= -0.3).sum())
+                        _oc = int((_lo >= 0.62).sum())
                         print(
                             f"[stats] frames={frame_count} pose=({slam.pose[0]:.0f},{slam.pose[1]:.0f}) "
                             f"误差: mean={s['pos_mean']:.1f}px last={s['pos_last']:.1f}px "
-                            f"max={s['pos_max']:.1f}px | {s['th_mean_deg']:.1f}deg{drift}"
+                            f"max={s['pos_max']:.1f}px | {s['th_mean_deg']:.1f}deg{drift} "
+                            f"| 地图: free={_fr} occ={_oc}"
                         )
                     else:
+                        _lo = slam.grid._logodds
                         print(
                             f"[stats] frames={frame_count} pose=({slam.pose[0]:.0f},{slam.pose[1]:.0f})（无真值）"
+                            f" 地图: free={int((_lo <= -0.3).sum())} occ={int((_lo >= 0.62).sum())}"
                         )
 
             await asyncio.sleep(0.002)  # ~200Hz 空转，消费节拍由 Godot 20Hz 决定
@@ -240,9 +261,7 @@ def main() -> None:
     parser.add_argument(
         "--no-debug", action="store_true", help="禁用调试窗口（真值 vs 传感器差异曲线）"
     )
-    parser.add_argument(
-        "--no-lidar", action="store_true", help="禁用激光雷达视图窗口"
-    )
+    parser.add_argument("--no-lidar", action="store_true", help="禁用激光雷达视图窗口")
     parser.add_argument(
         "--auto",
         dest="auto",
@@ -270,8 +289,8 @@ def main() -> None:
             run(
                 cfg,
                 show_view=not args.no_view,
-                show_debug=not args.no_debug,
-                show_lidar=not args.no_lidar,
+                show_debug=args.no_debug,
+                show_lidar=args.no_lidar,
                 force_auto=args.auto,
             )
         )

@@ -19,6 +19,7 @@ from collections import deque
 import numpy as np
 
 log = logging.getLogger(__name__)
+from vrobot.viz.event_pump import pump as _pump_events
 
 
 class DebugViewer:
@@ -179,9 +180,9 @@ class DebugViewer:
             ax_pos.set_title(f"位置误差 (px)  last: odom={pos_err_odom[-1]:.1f} slam={pos_err_slam[-1]:.1f}")
             ax_th.set_title(f"航向误差 (deg)  last: odom={th_err[-1]:.1f} slam={th_err_slam[-1]:.1f}")
             # 不用 plt.pause()：它每帧把窗口抬到 Z 序顶端并抢焦点，导致"永远置顶"、无法拖动。
-            # draw_idle + flush_events 只重绘画布和处理事件，窗口 z 序/焦点交给系统正常管理。
+            # draw_idle 后主动泵 GUI 事件（event_pump.py），窗口 z 序/焦点交给系统正常管理。
             self._fig.canvas.draw_idle()
-            self._fig.canvas.flush_events()
+            _pump_events(self._fig)
         except Exception as e:
             log.debug("debug viewer draw failed: %s", e)
 
