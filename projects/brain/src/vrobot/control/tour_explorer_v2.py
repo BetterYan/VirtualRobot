@@ -104,6 +104,11 @@ class ExplorerParams:
     max_blacklist: int = 24
     stall_builds: int = 10          # 跨位移的环游重建次数达到该值且 unknown 不减 → 收敛
     stall_frac: float = 0.998       # unknown 降幅不足（当前/历史 ≥ 该值）视为无进展
+    # ---- 全局覆盖意识 ----
+    coverage_scale: int = 4         # 覆盖图粗格边长（基础格）：场地按此划分区块
+    coverage_max_try: int = 8       # 奔赴未探测区时最多尝试的最近粗格数
+    seek_max_rounds: int = 3        # "无 frontier 但仍有未探测区"的最大奔赴轮数（防不可达死循环）
+    completion_stable: int = 300    # 场地边界稳定该帧数（≈闭环）→ 补齐扫尽中部未探测区
     # ---- 空图引导 ----
     bootstrap_free_min: int = 100   # 自由格低于此视为地图空白 → 直行探测
     bootstrap_frames: int = 60      # 每轮直行探测帧数（3s）
@@ -711,6 +716,70 @@ class Blacklist:
 
 
 # ---------------------------------------------------------------------------
+# 全局覆盖图（"全局意识"：推算场地大小 + 标记未探测区域）
+# ---------------------------------------------------------------------------
+
+
+class CoverageMap:
+    """全局覆盖图：机器人的"全局意识"。
+
+    三个职责：
+    1) 推算已知场地边界 `bounds`（observed extent，随探索增长）——
+       对"整个场地有多大"的持续估计；
+    2) 以 `scale` 基础格为一粗格，把场地划分为区块，标记每块是否已
+       完全探测（不含 unknown）；
+    3) 产出"尚未探测区域"的粗格中心 `unexplored`，供"直行奔赴未探测区"
+       使用（`_nearest_unexplored_goal`）。
+
+    与 frontier 的本质区别：frontier 只看"未知与已确认自由的交界"（局部、
+    反应式）；coverage 记录"整个场地还有哪片区域未知"（全局、有规划），
+    能引导机器人直行奔赴大片未探测区，而非在眼前的小边界间来回打转——
+    这正是摆脱原地死循环所需的全局意识。
+    """
+
+    def __init__(self, scale: int = 4):
+        self.scale = int(scale)
+        self.bounds: tuple[int, int, int, int] | None = None  # (c0,r0,c1,r1) 已知场地边界
+        self.unexplored: list[tuple[int, int]] = []           # 未探测粗格中心 (col,row)
+        self.explored_frac: float = 0.0                       # 已探测粗格比例（诊断）
+
+    def update(self, lo: np.ndarray, free_below: float, occupied_above: float) -> None:
+        free = lo <= free_below
+        occ = lo >= occupied_above
+        known = free | occ
+        unknown = ~known
+        h, w = lo.shape
+
+        # 场地边界 = 所有已知格的外接框；尚无已知格 → 暂不设（空白地图）
+        if known.any():
+            ys, xs = np.where(known)
+            self.bounds = (int(xs.min()), int(ys.min()),
+                           int(xs.max()) + 1, int(ys.max()) + 1)
+        else:
+            self.bounds = None
+
+        s = self.scale
+        margin = s                       # 边界外扩 1 粗格作为候选，避免把栅格空白边缘当目标
+        unexplored: list[tuple[int, int]] = []
+        explored = total = 0
+        if self.bounds is not None:
+            c0b, r0b, c1b, r1b = self.bounds
+            c0m, r0m = max(0, c0b - margin), max(0, r0b - margin)
+            c1m, r1m = min(w, c1b + margin), min(h, r1b + margin)
+            for rr in range(r0m // s, (r1m + s - 1) // s):
+                r0, r1 = rr * s, min((rr + 1) * s, h)
+                for cc in range(c0m // s, (c1m + s - 1) // s):
+                    c0, c1 = cc * s, min((cc + 1) * s, w)
+                    total += 1
+                    if unknown[r0:r1, c0:c1].any():
+                        unexplored.append(((c0 + c1) // 2, (r0 + r1) // 2))
+                    else:
+                        explored += 1
+        self.unexplored = unexplored
+        self.explored_frac = explored / max(total, 1)
+
+
+# ---------------------------------------------------------------------------
 # 主类：状态机编排 + 异常分发 + 异步规划边界
 # ---------------------------------------------------------------------------
 
@@ -747,6 +816,10 @@ class TourExplorerV2:
         self.planner = TourPlanner(self.p)
         self.convergence = ConvergenceJudge(self.p.stall_builds, self.p.stall_frac)
         self.blacklist = Blacklist(self.p.blacklist_ttl, self.p.max_blacklist)
+        self.coverage = CoverageMap(self.p.coverage_scale)   # 全局覆盖意识
+        self._completing = False             # 补齐模式：闭环后扫尽剩余未探测区
+        self._last_bounds: tuple | None = None
+        self._bounds_changed_frame = 0       # 场地边界最近一次变化的帧号
 
         # 环游 / 腿
         self._frame = 0
@@ -779,6 +852,9 @@ class TourExplorerV2:
         self._theta_prev: float | None = None
         self._spin_abs = 0.0
         self._seeking_unknown = False    # 高优先级指令态：直奔最近未知区
+        self._committed_goal: tuple[int, int] | None = None  # 已承诺的奔赴目标（迟滞防左右抖动）
+        self._seek_rounds = 0            # 全局奔赴轮数（防不可达死循环）
+        self.pose_cell = (0, 0)          # 机器人当前所在格 (col,row)，全局意识的一部分
 
         # 异步规划（单写者：_path/游标只由主线程写；_pending 由规划线程产出）
         self._plan_lock = threading.Lock()
@@ -931,6 +1007,7 @@ class TourExplorerV2:
         self._last_scan = scan
         pose = slam.pose
         grid = slam.grid
+        self.pose_cell = grid.world_to_cell(pose[0], pose[1])   # 全局意识：记录自身位置
 
         # 1) 卡死检测：只在指令了运动的状态积累证据（静止待命按设计不动）
         if self.state in (State.FOLLOW, State.PROBE):
@@ -1086,12 +1163,30 @@ class TourExplorerV2:
         self._replan_cd = self.p.replan_check
         lo = grid._logodds
         u = int(((~(lo <= self.p.free_below)) & (~(lo >= self.p.occupied_above))).sum())
+        # 全局意识：更新覆盖图（场地边界 + 未探测区块）
+        self.coverage.update(lo, self.p.free_below, self.p.occupied_above)
+        # 闭环检测：场地边界稳定 = 已推算整个地图大小。仍有未探测区 →
+        # 进入补齐模式，直行扫尽中部/剩余未探测区（直到 unexplored 清空）。
+        b = self.coverage.bounds
+        if b != self._last_bounds:
+            self._last_bounds = b
+            self._bounds_changed_frame = self._frame
+        elif (b is not None and not self.done
+              and self._frame - self._bounds_changed_frame >= self.p.completion_stable
+              and self.coverage.unexplored
+              and not self._completing and not self._seeking_unknown):
+            log.info("场地边界稳定 %d 帧（闭环）→ 补齐模式：直行扫尽 %d 块未探测区",
+                     self.p.completion_stable, len(self.coverage.unexplored))
+            self._completing = True
+            self._bounds_changed_frame = self._frame   # 复位计时，等下一次稳定再判
         if self._last_unknown >= 0:
             if u < self._last_unknown:
                 # 学习事件：地图熵下降 → 打转看门狗累计清零 + 退出
                 # "直奔未知区"指令态（已学到新东西，交还环游裁决）
                 self._spin_abs = 0.0
                 self._seeking_unknown = False
+                self._committed_goal = None
+                self._seek_rounds = 0
             if u > 0:
                 frac = abs(u - self._last_unknown) / u
                 if frac >= self.p.map_change_frac:
@@ -1099,6 +1194,10 @@ class TourExplorerV2:
                     self._tour = []
                     self._pending = None   # 后台可能产出自旧地图的过期路径
         self._last_unknown = u
+        if self.coverage.bounds is not None:
+            log.debug("覆盖图：场地≈%s，未探测 %d 块（%.0f%% 已探测），机器人@%s",
+                      self.coverage.bounds, len(self.coverage.unexplored),
+                      self.coverage.explored_frac * 100, self.pose_cell)
 
     def _path_valid(self, grid: OccupancyGrid) -> bool:
         """剩余路径逐 4 格采样，不得落入膨胀占据区（动态障碍即时响应）。"""
@@ -1153,10 +1252,11 @@ class TourExplorerV2:
 
         环游耗尽 → 重建（限制递归深度防闭环）。
         """
-        # 高优先级指令态：打转后奔赴最近未知区（优先于环游）。
-        # 目标是"最近的可达 frontier 自由格"——主动探索未探索区域。
-        if self._seeking_unknown:
-            goal = self._nearest_frontier_goal(grid, pose)
+        # 高优先级指令态：打转后奔赴最近未知区 / 闭环后补齐扫尽未探测区。
+        # 目标优先取全局覆盖图里"最近的未探测区块"（主动探索未探索区域），
+        # 覆盖图没有则退回到最近的 frontier 自由格。
+        if self._seeking_unknown or self._completing:
+            goal = self._select_seek_goal(grid, pose)
             if goal is not None:
                 path = self._astar_path(grid, pose, goal)
                 if path:
@@ -1166,6 +1266,7 @@ class TourExplorerV2:
                     return
             # 无未知区 / 最近未知区不可达 → 退出指令态，交还环游与收敛判据
             self._seeking_unknown = False
+            self._completing = False
 
         # 环游过期 → 重建
         if self._tour and self._frame - self._tour_frame > self.p.tour_refresh:
@@ -1212,6 +1313,15 @@ class TourExplorerV2:
             if free_count < self.p.bootstrap_free_min:
                 self._raise(Anomaly.BLANK_MAP, "自由格 %d" % free_count)
                 return PlanOutcome.BLANK
+            # 全局意识：无 frontier 但覆盖图仍有未探测区域（被墙围住/未知
+            # 孤岛，frontier 检测不到）→ 直行奔赴，而非过早宣布完成。
+            # 轮数受限（seek_max_rounds）防不可达未探测区导致死循环。
+            if self.coverage.unexplored and self._seek_rounds < self.p.seek_max_rounds:
+                self._seek_rounds += 1
+                self._seeking_unknown = True
+                log.info("无 frontier 但仍有 %d 块未探测区 → 全局奔赴（第 %d 轮）",
+                         len(self.coverage.unexplored), self._seek_rounds)
+                return PlanOutcome.STARVED
             log.info("无 frontier → 建图完成（栅格更新 %d 次，规划 %d 次）",
                      grid.n_updates, self.n_plans)
             self.done = True
@@ -1264,6 +1374,54 @@ class TourExplorerV2:
         if not (0 <= c < lo.shape[1] and 0 <= r < lo.shape[0]):
             return False
         return lo[r, c] < self.p.occupied_above
+
+    def _select_seek_goal(self, grid: OccupancyGrid,
+                          pose: tuple[float, float, float]) -> tuple[int, int] | None:
+        """选择"奔赴未探测区"的目标，带**承诺 + 迟滞**。
+
+        物理动机：左右前方都有未知区且距离相近时，"每次规划取最近"会随
+        地图微变在两侧间来回翻转 → 机器人左转右转原地打转。正确做法是
+        **大胆锁定一个方向坚定执行**：
+
+        1) 已承诺目标仍在未探测区块且可达 → 继续奔赴（不因另一侧只近
+           一点点就换向——这是左右对称抖动与原地打转的根治）；
+        2) 否则释放承诺，重新选择最近可达的未探测区（确定性排序，对称
+           选择也永不抖动），并立刻锁定它。
+        承诺直到"该区块被探索完（移出 unexplored）"或"不可达"才释放。
+        """
+        if self._committed_goal is not None:
+            if (self._committed_goal in self.coverage.unexplored
+                    and self._astar_path(grid, pose, self._committed_goal)):
+                return self._committed_goal
+            self._committed_goal = None   # 已探索完 / 不可达 → 释放
+        goal = (self._nearest_unexplored_goal(grid, pose)
+                or self._nearest_frontier_goal(grid, pose))
+        self._committed_goal = goal
+        return goal
+
+    def _nearest_unexplored_goal(self, grid: OccupancyGrid,
+                                 pose: tuple[float, float, float]) -> tuple[int, int] | None:
+        """全局未探测区硬目标：覆盖图里距机器人最近且可达的未探测粗格中心。
+
+        这是"全局意识"的落点：不是看眼前的 frontier 像素，而是看整个场地
+        还有哪片区块没探测，直行奔赴最近的一块。按欧氏距离排序，逐个做
+        A* 可达性检查（覆盖图中心可能落在墙内，跳过即可）。返回 (col,row)；
+        无未探测区 / 均不可达返回 None。
+        """
+        if not self.coverage.unexplored:
+            return None
+        start = grid.world_to_cell(pose[0], pose[1])
+        # 确定性排序：距离 → 行 → 列。左右对称等距时始终取同一侧（先上/左），
+        # 永不因浮点/地图微变在两侧间抖动。
+        order = sorted(self.coverage.unexplored,
+                       key=lambda t: ((t[0] - start[0]) ** 2 + (t[1] - start[1]) ** 2,
+                                      t[1], t[0]))
+        for cell in order[: self.p.coverage_max_try]:
+            if not grid.in_bounds(*cell):
+                continue
+            if self._astar_path(grid, pose, cell):
+                return cell
+        return None
 
     def _nearest_frontier_goal(self, grid: OccupancyGrid,
                                pose: tuple[float, float, float]) -> tuple[int, int] | None:
@@ -1343,6 +1501,12 @@ class TourExplorerV2:
         self._theta_prev = None
         self._spin_abs = 0.0
         self._seeking_unknown = False
+        self._committed_goal = None
+        self._seek_rounds = 0
+        self._completing = False
+        self._last_bounds = None
+        self._bounds_changed_frame = 0
+        self.pose_cell = (0, 0)
 
     def close(self) -> None:
         """停止后台规划线程（daemon 线程，进程退出时亦自动结束）。"""
