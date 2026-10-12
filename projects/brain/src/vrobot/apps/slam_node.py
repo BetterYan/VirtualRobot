@@ -112,6 +112,16 @@ async def run(
             inflate_cells=exp_cfg.get("inflate_cells", 2),
             min_frontier_size=exp_cfg.get("min_frontier_size", 4),
         )
+    elif exp_mode == "tour_v2":
+        from vrobot.control.tour_explorer_v2 import TourExplorerV2
+
+        explorer = TourExplorerV2(
+            cell_size=slam.grid.cell_size,
+            linear=exp_cfg.get("linear", 60.0),
+            angular=exp_cfg.get("angular", 1.5),
+            inflate_cells=exp_cfg.get("inflate_cells", 2),
+            min_frontier_size=exp_cfg.get("min_frontier_size", 4),
+        )
     elif exp_mode == "reactive":
         explorer = ReactiveExplorer(
             linear=exp_cfg.get("reactive", {}).get("linear", 55.0),

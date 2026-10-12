@@ -74,8 +74,9 @@ class HybridParams:
     frontier_check_every: int = 100   # frontier 阶段检查新区的间隔（帧）
     cov_cooldown: int = 200       # coverage 空手而归后，禁止立刻再进 coverage（帧）
     # ---- frontier 阶段后端 ----
-    frontier_mode: str = "tour"   # "tour"=FUEL-lite（默认）| "classic"=旧 FrontierExplorer
-    async_plan: bool = True       # tour 后端的后台规划线程（防指令阻塞走停）
+    frontier_mode: str = "tour"   # "tour_v2"=FUEL-lite v2（tour_explorer_v2.py）
+                                  #   | "tour"=FUEL-lite（默认）| "classic"=旧 FrontierExplorer
+    async_plan: bool = True       # tour/tour_v2 后端的后台规划线程（防指令阻塞走停）
     # ---- 安全 ----
     front_panic: float = 26.0     # 前方紧急转向距离（px）
     stuck_window: int = 50
@@ -101,7 +102,12 @@ class HybridExplorer:
             occupied_above=self.p.occupied_above,
             inflate_cells=self.p.inflate_cells,
         )
-        if self.p.frontier_mode == "tour":
+        if self.p.frontier_mode == "tour_v2":
+            from vrobot.control.tour_explorer_v2 import TourExplorerV2
+            self._frontier_ex: TourExplorerV2 | object = TourExplorerV2(
+                **frontier_kwargs, async_plan=self.p.async_plan
+            )
+        elif self.p.frontier_mode == "tour":
             from vrobot.control.tour_explorer import TourExplorer
             self._frontier_ex: TourExplorer | FrontierExplorer = TourExplorer(
                 **frontier_kwargs, async_plan=self.p.async_plan

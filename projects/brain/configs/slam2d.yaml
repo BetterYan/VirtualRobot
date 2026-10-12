@@ -45,7 +45,9 @@ slam:
                          #   0.55/0.49 过于保守，桥接后自由格够不着 free_below 阈值）
 
 explorer:
-  mode: tour             # tour=纯 FUEL-lite（聚类→观察点→TSP 环游→纯追踪，见 control/tour_explorer.py）
+  mode: tour_v2          # tour_v2=FUEL-lite v2 重构版（显式状态机+异常登记表，
+                         #   见 control/tour_explorer_v2.py 与 docs/tour_explorer_v2_physical_notes.md）
+                         #   | tour=纯 FUEL-lite（聚类→观察点→TSP 环游→纯追踪，见 control/tour_explorer.py）
                          #   | hybrid=沿边→弓形→frontier（frontier 阶段默认用 FUEL-lite）
                          #   | frontier=经典贪心 frontier（Yamauchi） | reactive=反应式避障(调试) | off
   enabled: true           # 自动驾驶默认开启（Godot HUD 按钮可切 manual 遥控）
@@ -56,16 +58,18 @@ explorer:
   hybrid:                 # hybrid 模式参数（沿边→弓形→frontier 三阶段）
     lane_pitch: 4         # 弓形车道行距（格，4格=32px）
     min_run: 4            # 车道最小长度（格）
-    frontier_mode: tour   # frontier 阶段后端：tour=FUEL-lite | classic=旧贪心 FrontierExplorer
+    frontier_mode: tour_v2   # frontier 阶段后端：tour_v2=FUEL-lite v2（tour_explorer_v2.py）
+                          #   | tour=FUEL-lite | classic=旧贪心 FrontierExplorer
   reactive:               # reactive 模式参数
     linear: 55.0
     angular: 1.6
     front_dist: 60.0
     beam_spread: 7
-  # tour 模式（及 hybrid 的 tour 后端）关键参数，默认值见 control/tour_explorer.py TourParams：
+  # tour/tour_v2 模式（及 hybrid 的对应后端）关键参数，
+  # 默认值见 control/tour_explorer.py TourParams / tour_explorer_v2.py ExplorerParams：
   #   lambda_cost=20        打分 = 信息增益 / (λ+路径代价)，越小越愿意为高增益跑远路
   #   vp_min_dist=4         观察点距机器人最小距离（格），防"脚下观察点"死锁
-  #   lookahead=50          纯追踪前视距离 px（蛇形根治点之一）
+  #   lookahead=50          前视目标点距离 px（确定性"对准-直行"跟随）
   #   w_rate_limit=0.8      角速度帧间变化上限 rad（20Hz → 16 rad/s²）
   #   blacklist_ttl=900     不可达观察点黑名单存活帧数（45s），过期自动解除
   #   stall_builds=10       跨实际位移的环游重建多次无地图进展 → 判定建图收敛
